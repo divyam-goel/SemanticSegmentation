@@ -2,9 +2,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from aspp import build_aspp
-from decoder import build_decoder
-from xception import build_backbone
+from model.aspp import build_aspp
+from model.decoder import build_decoder
+from model.xception import build_backbone
 
 class DeepLab(nn.Module):
     def __init__(self, output_stride=16, num_classes=21, freeze_bn=False):
@@ -48,6 +48,10 @@ class DeepLab(nn.Module):
                     for p in m[1].parameters():
                         if p.requires_grad:
                             yield p
+
+    def optim_parameters(self, args):
+        return [{'params': self.get_1x_lr_params(), 'lr': args.learning_rate},
+                {'params': self.get_10x_lr_params(), 'lr': 10*args.learning_rate}] 
 
 
 if __name__ == "__main__":
