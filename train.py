@@ -360,8 +360,7 @@ def main():
 
                 # only access to img
                 images, _, _, _ = batch
-                images = Variable(images).cpu()
-                # images = Variable(images).cuda(args.gpu)
+                images = Variable(images).cuda(args.gpu)
 
 
                 pred = interp(model(images))
@@ -396,8 +395,7 @@ def main():
                     else:
                         semi_gt = torch.FloatTensor(semi_gt)
 
-                        loss_semi = args.lambda_semi * loss_calc(pred, semi_gt)
-                        # loss_semi = args.lambda_semi * loss_calc(pred, semi_gt, args.gpu)
+                        loss_semi = args.lambda_semi * loss_calc(pred, semi_gt, args.gpu)
                         loss_semi = loss_semi/args.iter_size
                         loss_semi_value += loss_semi.data.cpu().numpy()/args.lambda_semi
                         loss_semi += loss_semi_adv
