@@ -1,16 +1,15 @@
 import argparse
 import os
 import os.path as osp
-# import pickle
-# import random
+import random
 # import sys
 
 # import cv2
 # import matplotlib.pyplot as plt
 import numpy as np
-# import pickle
-# import scipy.misc
+import pickle
 # from packaging import version
+# import scipy.misc
 
 import torch
 from torch.autograd import Variable
@@ -62,7 +61,7 @@ SNAPSHOT_DIR = './snapshots/'
 
 RESTORE_FROM = 'http://vllab1.ucmerced.edu/~whung/adv-semi-seg/resnet101COCO-41f33a49.pth'
 
-# PARTIAL_DATA=0.5
+PARTIAL_DATA=0.5
 IGNORE_LABEL = 255
 
 SEMI_START=5000
@@ -73,6 +72,7 @@ LAMBDA_SEMI_ADV=0.001
 SEMI_START_ADV=0
 D_REMAIN=True
 
+CPU = True
 
 def get_arguments():
     """Parse all the arguments provided from the CLI.
@@ -93,10 +93,10 @@ def get_arguments():
                         help="Path to the directory containing the PASCAL VOC dataset.")
     parser.add_argument("--data-list", type=str, default=DATA_LIST_PATH,
                         help="Path to the file listing the images in the dataset.")
-    # parser.add_argument("--partial-data", type=float, default=PARTIAL_DATA,
-    #                     help="The index of the label to ignore during the training.")
-    # parser.add_argument("--partial-id", type=str, default=None,
-    #                     help="restore partial id list")
+    parser.add_argument("--partial-data", type=float, default=PARTIAL_DATA,
+                        help="The index of the label to ignore during the training.")
+    parser.add_argument("--partial-id", type=str, default=None,
+                        help="restore partial id list")
     parser.add_argument("--ignore-label", type=int, default=IGNORE_LABEL,
                         help="The index of the label to ignore during the training.")
     parser.add_argument("--input-size", type=str, default=INPUT_SIZE,
@@ -214,18 +214,19 @@ def main():
     # create segmentation network
     model = DeepLab(num_classes=args.num_classes)
 
-    # load pretrained parameters
-    if args.restore_from[:4] == 'http' :
-        saved_state_dict = model_zoo.load_url(args.restore_from)
-    else:
-        saved_state_dict = torch.load(args.restore_from)
+    if CPU is False:
+        # load pretrained parameters
+        if args.restore_from[:4] == 'http' :
+            saved_state_dict = model_zoo.load_url(args.restore_from)
+        else:
+            saved_state_dict = torch.load(args.restore_from)
 
-    # only copy the params that exist in current model (caffe-like)
-    new_params = model.state_dict().copy()
-    for name, param in new_params.items():
-        if name in saved_state_dict and param.size() == saved_state_dict[name].size():
-            new_params[name].copy_(saved_state_dict[name])
-    model.load_state_dict(new_params)
+        # only copy the params that exist in current model (caffe-like)
+        new_params = model.state_dict().copy()
+        for name, param in new_params.items():
+            if name in saved_state_dict and param.size() == saved_state_dict[name].size():
+                new_params[name].copy_(saved_state_dict[name])
+        model.load_state_dict(new_params)
 
     model.train()
     model.cpu()
@@ -254,21 +255,47 @@ def main():
 
 
     # Load train data and ground truth labels
-    # train_dataset = VOCDataSet(args.data_dir, args.data_list, crop_size=input_size,
-    #                 scale=args.random_scale, mirror=args.random_mirror, mean=IMG_MEAN)
-    # train_gt_dataset = VOCGTDataSet(args.data_dir, args.data_list, crop_size=input_size,
-    #                    scale=args.random_scale, mirror=args.random_mirror, mean=IMG_MEAN)
+    if CPU is False:
+        train_dataset = VOCDataSet(args.data_dir, args.data_list, crop_size=input_size,
+                        scale=args.random_scale, mirror=args.random_mirror, mean=IMG_MEAN)
+        train_gt_dataset = VOCGTDataSet(args.data_dir, args.data_list, crop_size=input_size,
+                           scale=args.random_scale, mirror=args.random_mirror, mean=IMG_MEAN)
+    else:
+        train_dataset = MyCustomDataset()
+        train_gt_dataset = MyCustomDataset()
 
-    # trainloader = data.DataLoader(train_dataset,
-    #                 batch_size=args.batch_size, shuffle=True, num_workers=5, pin_memory=False)
-    # trainloader_gt = data.DataLoader(train_gt_dataset,
-    #                 batch_size=args.batch_size, shuffle=True, num_workers=5, pin_memory=False)
+    if args.partial_data is None:
+        trainloader = data.DataLoader(train_dataset,
+                        batch_size=args.batch_size, shuffle=True, num_workers=5, pin_memory=False)
 
-    train_dataset = MyCustomDataset()
-    train_gt_dataset = MyCustomDataset()
+        trainloader_gt = data.DataLoader(train_gt_dataset,
+                        batch_size=args.batch_size, shuffle=True, num_workers=5, pin_memory=False)
+    else:
+        #sample partial data
+        train_dataset_size = len(train_dataset)
+        partial_size = int(args.partial_data * train_dataset_size)
 
-    trainloader = data.DataLoader(train_dataset, batch_size=5, shuffle=True)
-    trainloader_gt = data.DataLoader(train_gt_dataset, batch_size=5, shuffle=True)
+        if args.partial_id is not None:
+            train_ids = pickle.load(open(args.partial_id))
+            print('loading train ids from {}'.format(args.partial_id))
+        else:
+            train_ids = list(range(train_dataset_size))
+            np.random.shuffle(train_ids)
+
+        pickle.dump(train_ids, open(osp.join(args.snapshot_dir, 'train_id.pkl'), 'wb'))
+
+        train_sampler = data.sampler.SubsetRandomSampler(train_ids[:partial_size])
+        train_remain_sampler = data.sampler.SubsetRandomSampler(train_ids[partial_size:])
+        train_gt_sampler = data.sampler.SubsetRandomSampler(train_ids[:partial_size])
+
+        trainloader = data.DataLoader(train_dataset,
+                        batch_size=args.batch_size, sampler=train_sampler, num_workers=3, pin_memory=False)
+        trainloader_remain = data.DataLoader(train_dataset,
+                        batch_size=args.batch_size, sampler=train_remain_sampler, num_workers=3, pin_memory=False)
+        trainloader_gt = data.DataLoader(train_gt_dataset,
+                        batch_size=args.batch_size, sampler=train_gt_sampler, num_workers=3, pin_memory=False)
+
+        trainloader_remain_iter = enumerate(trainloader_remain)
 
     trainloader_iter = enumerate(trainloader)
     trainloader_gt_iter = enumerate(trainloader_gt)
@@ -328,59 +355,61 @@ def main():
                 param.requires_grad = False
 
             # do semi first
-            # if (args.lambda_semi > 0 or args.lambda_semi_adv > 0 ) and i_iter >= args.semi_start_adv :
-            #     try:
-            #         _, batch = next(trainloader_remain_iter)
-            #     except:
-            #         trainloader_remain_iter = enumerate(trainloader_remain)
-            #         _, batch = next(trainloader_remain_iter)
+            if (args.lambda_semi > 0 or args.lambda_semi_adv > 0 ) and i_iter >= args.semi_start_adv :
+                try:
+                    _, batch = next(trainloader_remain_iter)
+                except:
+                    trainloader_remain_iter = enumerate(trainloader_remain)
+                    _, batch = next(trainloader_remain_iter)
 
-            #     # only access to img
-            #     images, _, _, _ = batch
-            #     images = Variable(images).cuda(args.gpu)
+                # only access to img
+                images, _, _, _ = batch
+                images = Variable(images).cpu()
+                # images = Variable(images).cuda(args.gpu)
 
 
-            #     pred = interp(model(images))
-            #     pred_remain = pred.detach()
+                pred = interp(model(images))
+                pred_remain = pred.detach()
 
-            #     D_out = interp(model_D(F.softmax(pred)))
-            #     D_out_sigmoid = F.sigmoid(D_out).data.cpu().numpy().squeeze(axis=1)
+                D_out = interp(model_D(F.softmax(pred)))
+                D_out_sigmoid = F.sigmoid(D_out).data.cpu().numpy().squeeze(axis=1)
 
-            #     ignore_mask_remain = np.zeros(D_out_sigmoid.shape).astype(np.bool)
+                ignore_mask_remain = np.zeros(D_out_sigmoid.shape).astype(np.bool)
 
-            #     loss_semi_adv = args.lambda_semi_adv * bce_loss(D_out, make_D_label(gt_label, ignore_mask_remain))
-            #     loss_semi_adv = loss_semi_adv/args.iter_size
+                loss_semi_adv = args.lambda_semi_adv * bce_loss(D_out, make_D_label(gt_label, ignore_mask_remain))
+                loss_semi_adv = loss_semi_adv/args.iter_size
 
-            #     #loss_semi_adv.backward()
-            #     loss_semi_adv_value += loss_semi_adv.data.cpu().numpy()/args.lambda_semi_adv
+                #loss_semi_adv.backward()
+                loss_semi_adv_value += loss_semi_adv.data.cpu().numpy()/args.lambda_semi_adv
 
-            #     if args.lambda_semi <= 0 or i_iter < args.semi_start:
-            #         loss_semi_adv.backward()
-            #         loss_semi_value = 0
-            #     else:
-            #         # produce ignore mask
-            #         semi_ignore_mask = (D_out_sigmoid < args.mask_T)
+                if args.lambda_semi <= 0 or i_iter < args.semi_start:
+                    loss_semi_adv.backward()
+                    loss_semi_value = 0
+                else:
+                    # produce ignore mask
+                    semi_ignore_mask = (D_out_sigmoid < args.mask_T)
 
-            #         semi_gt = pred.data.cpu().numpy().argmax(axis=1)
-            #         semi_gt[semi_ignore_mask] = 255
+                    semi_gt = pred.data.cpu().numpy().argmax(axis=1)
+                    semi_gt[semi_ignore_mask] = 255
 
-            #         semi_ratio = 1.0 - float(semi_ignore_mask.sum())/semi_ignore_mask.size
-            #         print('semi ratio: {:.4f}'.format(semi_ratio))
+                    semi_ratio = 1.0 - float(semi_ignore_mask.sum())/semi_ignore_mask.size
+                    print('semi ratio: {:.4f}'.format(semi_ratio))
 
-            #         if semi_ratio == 0.0:
-            #             loss_semi_value += 0
-            #         else:
-            #             semi_gt = torch.FloatTensor(semi_gt)
+                    if semi_ratio == 0.0:
+                        loss_semi_value += 0
+                    else:
+                        semi_gt = torch.FloatTensor(semi_gt)
 
-            #             loss_semi = args.lambda_semi * loss_calc(pred, semi_gt, args.gpu)
-            #             loss_semi = loss_semi/args.iter_size
-            #             loss_semi_value += loss_semi.data.cpu().numpy()/args.lambda_semi
-            #             loss_semi += loss_semi_adv
-            #             loss_semi.backward()
+                        loss_semi = args.lambda_semi * loss_calc(pred, semi_gt)
+                        # loss_semi = args.lambda_semi * loss_calc(pred, semi_gt, args.gpu)
+                        loss_semi = loss_semi/args.iter_size
+                        loss_semi_value += loss_semi.data.cpu().numpy()/args.lambda_semi
+                        loss_semi += loss_semi_adv
+                        loss_semi.backward()
 
-            # else:
-            #     loss_semi = None
-            #     loss_semi_adv = None
+            else:
+                loss_semi = None
+                loss_semi_adv = None
 
             # train with source
 
@@ -429,9 +458,9 @@ def main():
             # train with pred
             pred = pred.detach()
 
-            # if args.D_remain:
-            #     pred = torch.cat((pred, pred_remain), 0)
-            #     ignore_mask = np.concatenate((ignore_mask,ignore_mask_remain), axis = 0)
+            if args.D_remain:
+                pred = torch.cat((pred, pred_remain), 0)
+                ignore_mask = np.concatenate((ignore_mask,ignore_mask_remain), axis = 0)
 
             D_out = interp(model_D(F.softmax(pred)))
             loss_D = bce_loss(D_out, make_D_label(pred_label, ignore_mask))
