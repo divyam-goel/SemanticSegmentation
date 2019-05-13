@@ -149,22 +149,20 @@ def get_arguments():
                         help="Where to save snapshots of the model.")
     parser.add_argument("--weight-decay", type=float, default=WEIGHT_DECAY,
                         help="Regularisation parameter for L2-loss.")
-    # parser.add_argument("--gpu", type=int, default=0,
-    #                     help="choose gpu device.")
+    parser.add_argument("--gpu", type=int, default=0,
+                        help="choose gpu device.")
     return parser.parse_args()
 
 args = get_arguments()
 
-def loss_calc(pred, label): #, gpu):
+def loss_calc(pred, label, gpu):
     """
     This function returns cross entropy loss for semantic segmentation
     """
     # out shape batch_size x channels x h x w -> batch_size x channels x h x w
     # label shape h x w x 1 x batch_size  -> batch_size x 1 x h x w
-    label = Variable(label.long()).cpu()
-    # label = Variable(label.long()).cuda(gpu)
-    criterion = CrossEntropy2d().cpu()
-    # criterion = CrossEntropy2d().cuda(gpu)
+    label = Variable(label.long()).cuda(gpu)
+    criterion = CrossEntropy2d().cuda(gpu)
 
     return criterion(pred, label)
 
@@ -197,8 +195,7 @@ def make_D_label(label, ignore_mask):
     ignore_mask = np.expand_dims(ignore_mask, axis=1)
     D_label = np.ones(ignore_mask.shape)*label
     D_label[ignore_mask] = 255
-    D_label = Variable(torch.FloatTensor(D_label)).cpu()
-    # D_label = Variable(torch.FloatTensor(D_label)).cuda(args.gpu)
+    D_label = Variable(torch.FloatTensor(D_label)).cuda(args.gpu)
 
     return D_label
 
@@ -208,8 +205,8 @@ def main():
     h, w = map(int, args.input_size.split(','))
     input_size = (h, w)
 
-    # cudnn.enabled = True
-    # gpu = args.gpu
+    cudnn.enabled = True
+    gpu = args.gpu
 
     # create segmentation network
     model = DeepLab(num_classes=args.num_classes)
@@ -228,9 +225,8 @@ def main():
     # model.load_state_dict(new_params)
 
     model.train()
-    model.cpu()
-    # model.cuda(args.gpu)
-    # cudnn.benchmark = True
+    model.cuda(args.gpu)
+    cudnn.benchmark = True
 
 
     # create discriminator network
@@ -238,14 +234,13 @@ def main():
     # if args.restore_from_D is not None:
     #     model_D.load_state_dict(torch.load(args.restore_from_D))
     model_D.train()
-    model_D.cpu()
-    # model_D.cuda(args.gpu)
+    model_D.cuda(args.gpu)
 
     
     # MILESTONE 1
-    print("Printing MODELS ...")
-    print(model)
-    print(model_D)
+    # print("Printing MODELS ...")
+    # print(model)
+    # print(model_D)
 
 
     # Create directory to save snapshots of the model
@@ -254,30 +249,30 @@ def main():
 
 
     # Load train data and ground truth labels
-    # train_dataset = VOCDataSet(args.data_dir, args.data_list, crop_size=input_size,
-    #                 scale=args.random_scale, mirror=args.random_mirror, mean=IMG_MEAN)
-    # train_gt_dataset = VOCGTDataSet(args.data_dir, args.data_list, crop_size=input_size,
-    #                    scale=args.random_scale, mirror=args.random_mirror, mean=IMG_MEAN)
+    train_dataset = VOCDataSet(args.data_dir, args.data_list, crop_size=input_size,
+                    scale=args.random_scale, mirror=args.random_mirror, mean=IMG_MEAN)
+    train_gt_dataset = VOCGTDataSet(args.data_dir, args.data_list, crop_size=input_size,
+                       scale=args.random_scale, mirror=args.random_mirror, mean=IMG_MEAN)
 
-    # trainloader = data.DataLoader(train_dataset,
-    #                 batch_size=args.batch_size, shuffle=True, num_workers=5, pin_memory=False)
-    # trainloader_gt = data.DataLoader(train_gt_dataset,
-    #                 batch_size=args.batch_size, shuffle=True, num_workers=5, pin_memory=False)
+    trainloader = data.DataLoader(train_dataset,
+                    batch_size=args.batch_size, shuffle=True, num_workers=5, pin_memory=False)
+    trainloader_gt = data.DataLoader(train_gt_dataset,
+                    batch_size=args.batch_size, shuffle=True, num_workers=5, pin_memory=False)
 
-    train_dataset = MyCustomDataset()
-    train_gt_dataset = MyCustomDataset()
+    # train_dataset = MyCustomDataset()
+    # train_gt_dataset = MyCustomDataset()
 
-    trainloader = data.DataLoader(train_dataset, batch_size=5, shuffle=True)
-    trainloader_gt = data.DataLoader(train_gt_dataset, batch_size=5, shuffle=True)
+    # trainloader = data.DataLoader(train_dataset, batch_size=2, shuffle=True)
+    # trainloader_gt = data.DataLoader(train_gt_dataset, batch_size=2, shuffle=True)
 
     trainloader_iter = enumerate(trainloader)
     trainloader_gt_iter = enumerate(trainloader_gt)
 
     
     # MILESTONE 2
-    print("Printing Loaders")
-    print(trainloader_iter)
-    print(trainloader_gt_iter)
+    # print("Printing Loaders")
+    # print(trainloader_iter)
+    # print(trainloader_gt_iter)
 
 
     # optimizer for segmentation network
@@ -291,9 +286,9 @@ def main():
 
 
     # MILESTONE 3
-    print("Printing OPTIMIZERS ...")
-    print(optimizer)
-    print(optimizer_D)
+    # print("Printing OPTIMIZERS ...")
+    # print(optimizer)
+    # print(optimizer_D)
 
 
     # loss/ bilinear upsampling
@@ -306,6 +301,7 @@ def main():
     gt_label = 1
 
 
+    print("\n\nStarting training ...\n\n")
     for i_iter in range(args.num_steps):
 
         loss_seg_value = 0
@@ -391,15 +387,13 @@ def main():
                 _, batch = next(trainloader_iter)
 
             images, labels, _, _ = batch
-            images = Variable(images).cpu()
-            # images = Variable(images).cuda(args.gpu)
+            images = Variable(images).cuda(args.gpu)
             ignore_mask = (labels.numpy() == 255)
             
             # segmentation prediction
             pred = interp(model(images))
             # (spatial multi-class) cross entropy loss
-            loss_seg = loss_calc(pred, labels)
-            # loss_seg = loss_calc(pred, labels, args.gpu)
+            loss_seg = loss_calc(pred, labels, args.gpu)
 
             # discriminator prediction
             D_out = interp(model_D(F.softmax(pred)))
@@ -449,8 +443,7 @@ def main():
                 _, batch = next(trainloader_gt_iter)
 
             _, labels_gt, _, _ = batch
-            D_gt_v = Variable(one_hot(labels_gt)).cpu()
-            # D_gt_v = Variable(one_hot(labels_gt)).cuda(args.gpu)
+            D_gt_v = Variable(one_hot(labels_gt)).cuda(args.gpu)
             ignore_mask_gt = (labels_gt.numpy() == 255)
 
             D_out = interp(model_D(D_gt_v))
