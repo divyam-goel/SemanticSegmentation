@@ -212,17 +212,17 @@ def main():
     model = DeepLab(num_classes=args.num_classes)
 
     # load pretrained parameters
-    # if args.restore_from[:4] == 'http' :
-    #     saved_state_dict = model_zoo.load_url(args.restore_from)
-    # else:
-    #     saved_state_dict = torch.load(args.restore_from)
+    if args.restore_from[:4] == 'http' :
+        saved_state_dict = model_zoo.load_url(args.restore_from)
+    else:
+        saved_state_dict = torch.load(args.restore_from)
 
     # only copy the params that exist in current model (caffe-like)
-    # new_params = model.state_dict().copy()
-    # for name, param in new_params.items():
-    #     if name in saved_state_dict and param.size() == saved_state_dict[name].size():
-    #         new_params[name].copy_(saved_state_dict[name])
-    # model.load_state_dict(new_params)
+    new_params = model.state_dict().copy()
+    for name, param in new_params.items():
+        if name in saved_state_dict and param.size() == saved_state_dict[name].size():
+            new_params[name].copy_(saved_state_dict[name])
+    model.load_state_dict(new_params)
 
     model.train()
     model.cuda(args.gpu)
